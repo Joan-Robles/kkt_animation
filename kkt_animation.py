@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Juego interactivo KKT: bombas, reparación al poliedro y convergencia al óptimo.
+Interactive KKT game: bombs, repair to the polyhedron, and convergence to the optimum.
 
-Ejecutar:
+Run:
     python kkt_stone_game.py
 
-Requisitos:
+Requirements:
     pip install numpy matplotlib
 
-Si estás en Jupyter:
+If you are in Jupyter:
     %matplotlib qt
     %run kkt_stone_game.py
 """
@@ -21,12 +21,12 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Rectangle, Circle
 from matplotlib.widgets import Button
 
 
 # ============================================================
-# 1. Problema
+# 1. Problem
 # ============================================================
 
 Q = np.array([
@@ -45,34 +45,34 @@ UPPER = 30.0
 TOTAL = 100.0
 N = 6
 
-# Óptimo construido del problema de maximización
+# Optimum construido del problema de maximización
 X_OPT = np.array([5, 5, 12, 18, 30, 30], dtype=float)
 NU_OPT = 1.0
 
-# Punto inicial: todos iguales
+# Initial point: all variables equal
 X0 = np.repeat(TOTAL / N, N)
 
 H = 0.001
 
 
 def f(x):
-    """Función objetivo: max b'x - 1/2 x'Qx."""
+    """Objective function: max b'x - 1/2 x'Qx."""
     x = np.asarray(x, dtype=float)
     return float(b @ x - 0.5 * x @ Q @ x)
 
 
 def grad_f(x):
-    """Gradiente de f."""
+    """Gradient of f."""
     x = np.asarray(x, dtype=float)
     return b - Q @ x
 
 
 def project_box_sum(y, lower=LOWER, upper=UPPER, total=TOTAL, max_iter=100):
     """
-    Proyección euclidiana sobre:
+    Euclidean projection onto:
         {x: lower <= x_i <= upper, sum(x)=total}
 
-    Usa búsqueda binaria sobre el multiplicador de la suma.
+    Uses binary search over the sum multiplier.
     """
     y = np.asarray(y, dtype=float)
 
@@ -93,11 +93,11 @@ def project_box_sum(y, lower=LOWER, upper=UPPER, total=TOTAL, max_iter=100):
 
 def net_marginal_delta(x):
     """
-    Eje y del gráfico:
+    Chart y-axis:
         Δf_i - NU_OPT * 0.001
 
-    Es una diferencia finita de aumentar x_i en 0.001,
-    neta del precio sombra de la restricción de suma.
+    It is a finite difference from increasing x_i by 0.001,
+    net of the shadow price of the sum constraint.
     """
     x = np.asarray(x, dtype=float)
     fx = f(x)
@@ -113,11 +113,11 @@ def net_marginal_delta(x):
 
 def enumerate_vertices_box_sum():
     """
-    Vértices del poliedro:
+    Polyhedron vertices:
         5 <= x_i <= 30, sum_i x_i = 100
 
-    En dimensión 6, un vértice tiene 5 variables en cota
-    y una variable libre determinada por la suma.
+    In dimension 6, a vertex has 5 variables at bounds
+    and one free variable determined by the sum.
     """
     candidates = []
 
@@ -132,7 +132,7 @@ def enumerate_vertices_box_sum():
             if LOWER - 1e-10 <= x[free] <= UPPER + 1e-10:
                 candidates.append(np.round(x, 12))
 
-    # Por robustez: revisar también todos los puntos de cotas completas
+    # For robustness: also check all full-bound points
     for bounds in itertools.product([LOWER, UPPER], repeat=N):
         x = np.array(bounds, dtype=float)
         if abs(x.sum() - TOTAL) < 1e-10:
@@ -143,8 +143,8 @@ def enumerate_vertices_box_sum():
 
 def find_feasible_minimum():
     """
-    Como f es cóncava, el mínimo sobre un poliedro compacto
-    ocurre en algún vértice.
+    Since f is concave, the minimum over a compact polyhedron
+    occurs at a vertex.
     """
     vertices = enumerate_vertices_box_sum()
     vals = np.array([f(v) for v in vertices])
@@ -158,9 +158,9 @@ F_OPT = f(X_OPT)
 
 def progress_value(x):
     """
-    Normalización de f:
-        0% = mínimo factible del problema
-        100% = óptimo de maximización
+    Normalization of f:
+        0% = feasible minimum of the problem
+        100% = maximization optimum
     """
     val = (f(x) - F_MIN) / (F_OPT - F_MIN)
     return float(np.clip(val, 0.0, 1.0))
@@ -168,9 +168,9 @@ def progress_value(x):
 
 def alpha_from_value(x):
     """
-    Transparencia:
-        f = mínimo  -> 80% transparente -> alpha = 0.20
-        f = óptimo  -> 0% transparente  -> alpha = 1.00
+    Transparency:
+        f = minimum -> 80% transparent -> alpha = 0.20
+        f = optimum -> 0% transparent -> alpha = 1.00
     """
     p = progress_value(x)
     return 0.20 + 0.80 * p
@@ -178,12 +178,12 @@ def alpha_from_value(x):
 
 def kkt_residual(x, eps=1e-4):
     """
-    Residuo KKT ilustrativo usando el multiplicador óptimo NU_OPT = 1.
+    Illustrative KKT residual using the optimal multiplier NU_OPT = 1.
 
-    En el óptimo:
-        si x_i = lower,  grad_i - nu <= 0
-        si interior,     grad_i - nu = 0
-        si x_i = upper,  grad_i - nu >= 0
+    At the optimum:
+        if x_i = lower,  grad_i - nu <= 0
+        if interior,     grad_i - nu = 0
+        if x_i = upper,  grad_i - nu >= 0
     """
     x = np.asarray(x, dtype=float)
     r = grad_f(x) - NU_OPT
@@ -202,14 +202,14 @@ def kkt_residual(x, eps=1e-4):
 
 def arrow_gradient(x, eps=1e-8):
     """
-    Gradiente efectivo usado SOLO para dibujar flechas.
+    Effective gradient used ONLY to draw arrows.
 
-    En el óptimo, las variables en cota deben seguir mostrando flecha:
-      x1,x2 en mínimo: flechas a la izquierda
-      x5,x6 en máximo: flechas a la derecha
-      x3,x4 interiores: sin flecha
+    At the optimum, variables at bounds must keep showing arrows:
+      x1,x2 at minimum: arrows to the left
+      x5,x6 at maximum: arrows to the right
+      x3,x4 interior: no arrow
 
-    Esto evita que efectos numéricos o estados 'done' borren las flechas
+    This prevents numerical effects or 'done' states from removing arrows
     de las restricciones activas.
     """
     x = np.asarray(x, dtype=float)
@@ -221,47 +221,94 @@ def arrow_gradient(x, eps=1e-8):
 
 
 # ============================================================
-# 2. Sonidos
+# 2. Sounds
 # ============================================================
 
-def _try_winsound_beeps(seq):
+SOUND_VOLUME = 0.50  # 50% de amplitud
+
+
+def _play_tone_sequence(seq, volume=SOUND_VOLUME, sample_rate=22050):
     """
-    Sonido no bloqueante.
-    En Windows usa winsound. En otros sistemas intenta campana terminal.
+    Reproduce una secuencia de tonos con volumen controlado por amplitud.
+
+    En Windows usa winsound.PlaySound sobre un WAV temporal generado.
+    En otros sistemas cae a campana terminal; ahí el volumen real depende del sistema.
     """
     try:
+        import os
+        import math as _math
+        import wave
+        import tempfile
         import winsound
-        for freq, dur in seq:
-            winsound.Beep(int(freq), int(dur))
+        import struct
+
+        volume = float(max(0.0, min(1.0, volume)))
+        samples = []
+
+        for freq, dur_ms in seq:
+            n_samples = int(sample_rate * dur_ms / 1000)
+            for k in range(n_samples):
+                t = k / sample_rate
+                # Envolvente simple para evitar clicks
+                env = min(1.0, k / max(1, int(0.015 * sample_rate)))
+                env *= min(1.0, (n_samples - k) / max(1, int(0.015 * sample_rate)))
+                amp = int(32767 * volume * 0.35 * env)
+                val = int(amp * _math.sin(2 * _math.pi * freq * t))
+                samples.append(val)
+
+            # mini silencio entre tonos
+            samples.extend([0] * int(sample_rate * 0.025))
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            wav_path = tmp.name
+
+        with wave.open(wav_path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(b"".join(struct.pack("<h", s) for s in samples))
+
+        winsound.PlaySound(wav_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+
+        # Limpieza diferida para no borrar el WAV antes de que Windows lo lea
+        def _cleanup():
+            time.sleep(2)
+            try:
+                os.remove(wav_path)
+            except OSError:
+                pass
+
+        threading.Thread(target=_cleanup, daemon=True).start()
+
     except Exception:
-        # Fallback simple: campana terminal
-        print("\a", end="", flush=True)
+        # Fallback simple; el volumen no es controlable con la campana terminal.
+        print("", end="", flush=True)
 
 
 def play_launch_sound():
     seq = [(360, 45), (430, 55)]
-    threading.Thread(target=_try_winsound_beeps, args=(seq,), daemon=True).start()
+    threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
 
 
 def play_impact_sound():
     seq = [(120, 80), (70, 120), (45, 180)]
-    threading.Thread(target=_try_winsound_beeps, args=(seq,), daemon=True).start()
+    threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
 
 
 def play_optimum_sound():
     seq = [(523, 110), (659, 110), (784, 160), (1046, 220)]
-    threading.Thread(target=_try_winsound_beeps, args=(seq,), daemon=True).start()
+    threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
 
 
 # ============================================================
-# 3. Juego interactivo
+# 3. Interactive game
 # ============================================================
 
 class KKTStoneGame:
     def __init__(self):
         self.rng = np.random.default_rng()
 
-        # Estado
+        # State
         self.x = X0.copy()
         self.mode = "optimize"  # optimize, stone, repair, done
         self.iterations = 0
@@ -271,26 +318,26 @@ class KKTStoneGame:
         self.reset_allowed = False
         self.victory_played = False
 
-        # Parámetros visuales / dinámicos
+        # Visual / dynamic parameters
         self.interval_ms = 30
         self.stone_seconds = 0.25
         self.stone_frames = max(2, int(round(1000 * self.stone_seconds / self.interval_ms)))
 
-        # Sin momentum: paso proyectado simple.
-        # Lejos avanza más rápido; cerca, más lento.
+        # No momentum: simple projected step.
+        # Far away it moves faster; close to the optimum, slower.
         self.eta_min = 0.035
         self.eta_max = 0.45
 
-        # Máximo movimiento permitido:
-        # 0.1 por variable por iteración = 1 unidad cada 10 iteraciones.
+        # Maximum allowed movement:
+        # 0.1 per variable per iteration = 1 unit every 10 iterations.
         self.max_step_per_iteration = 0.10
 
-        self.landing_threshold = 0.50
-        self.landing_steps_total = 5
+        self.landing_threshold = 1.00
+        self.landing_steps_total = 10
         self.landing_remaining = 0
         self.landing_start = None
 
-        self.repair_rate = 0.10  # suavidad al regresar a sum(x)=100
+        self.repair_rate = 0.10  # smoothness when returning to sum(x)=100
         self.explosion_frames_total = 8
         self.explosion_remaining = 0
         self.opt_tol = 0.004
@@ -324,22 +371,29 @@ class KKTStoneGame:
 
     def _setup_figure(self):
         self.fig = plt.figure(figsize=(12, 7))
-        self.fig.canvas.manager.set_window_title("Juego KKT con bombas")
+        self.fig.canvas.manager.set_window_title("KKT game with bombs")
 
         self.ax = self.fig.add_axes([0.08, 0.25, 0.70, 0.65])
         self.bar_ax = self.fig.add_axes([0.84, 0.25, 0.08, 0.65])
 
         self.ax_stone = self.fig.add_axes([0.08, 0.07, 0.20, 0.075])
-        self.ax_reset = self.fig.add_axes([0.31, 0.07, 0.20, 0.075])
-        self.ax_pause = self.fig.add_axes([0.54, 0.07, 0.20, 0.075])
 
-        self.btn_stone = Button(self.ax_stone, "Lanzar bomba")
-        self.btn_reset = Button(self.ax_reset, "Reiniciar")
-        self.btn_pause = Button(self.ax_pause, "Pausar")
+        # Small controls: circular icons, side by side.
+        self.ax_reset = self.fig.add_axes([0.315, 0.082, 0.045, 0.045])
+        self.ax_pause = self.fig.add_axes([0.372, 0.082, 0.045, 0.045])
+
+        self.btn_stone = Button(self.ax_stone, "Drop bomb")
+        self.btn_reset = Button(self.ax_reset, "↻")
+        self.btn_pause = Button(self.ax_pause, "⏸")
 
         self.btn_stone.on_clicked(self.throw_stone)
         self.btn_reset.on_clicked(self.reset_game)
         self.btn_pause.on_clicked(self.toggle_pause)
+
+        self.btn_reset.label.set_fontsize(15)
+        self.btn_pause.label.set_fontsize(15)
+
+        self._style_round_icon_buttons()
 
         self.metrics_text = self.fig.text(
             0.08, 0.17, "",
@@ -350,30 +404,63 @@ class KKTStoneGame:
 
         self.info_text = self.fig.text(
             0.55, 0.08,
-            f"Mínimo factible: f={F_MIN:.2f} en {np.round(X_MIN, 2)}     |     Óptimo: f={F_OPT:.2f}",
+            f"Feasible minimum: f={F_MIN:.2f} en {np.round(X_MIN, 2)}     |     Optimum: f={F_OPT:.2f}",
             fontsize=10,
             ha="left",
             va="center",
             color="0.25"
         )
 
-    def update_reset_button(self):
-        if self.reset_allowed:
-            self.btn_reset.label.set_text("Reiniciar")
-            self.ax_reset.set_facecolor("#DFF2E1")
-        else:
-            self.btn_reset.label.set_text("Reiniciar bloqueado")
-            self.ax_reset.set_facecolor("#EEEEEE")
+    def _style_round_icon_buttons(self):
+        """
+        Hace que reinicio y pausa se vean como botones circulares pequeños.
+        El área clickeable sigue siendo el eje cuadrado, pero no se muestra caja.
+        """
+        self._round_button_axes = [self.ax_reset, self.ax_pause]
+        self._round_button_circles = {}
 
+        for ax, face in [(self.ax_reset, "#EAF6EA"), (self.ax_pause, "#EEEEEE")]:
+            ax.set_aspect("equal")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_facecolor("none")
+
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+
+            # Ocultar la caja rectangular del widget.
+            ax.patch.set_alpha(0)
+
+            circle = Circle(
+                (0.5, 0.5),
+                0.46,
+                transform=ax.transAxes,
+                facecolor=face,
+                edgecolor="#777777",
+                linewidth=1.2,
+                zorder=-1
+            )
+            ax.add_patch(circle)
+            self._round_button_circles[ax] = circle
+
+    def _set_round_button_face(self, ax, facecolor):
+        if hasattr(self, "_round_button_circles") and ax in self._round_button_circles:
+            self._round_button_circles[ax].set_facecolor(facecolor)
+        ax.set_facecolor("none")
+        ax.patch.set_alpha(0)
+
+    def update_reset_button(self):
+        self.btn_reset.label.set_text("↻")
+        self._set_round_button_face(self.ax_reset, "#EAF6EA")
         self.fig.canvas.draw_idle()
 
     def update_pause_button(self):
         if self.paused:
-            self.btn_pause.label.set_text("Continuar")
-            self.ax_pause.set_facecolor("#FFF2CC")
+            self.btn_pause.label.set_text("▶")
+            self._set_round_button_face(self.ax_pause, "#FFF2CC")
         else:
-            self.btn_pause.label.set_text("Pausar")
-            self.ax_pause.set_facecolor("#EEEEEE")
+            self.btn_pause.label.set_text("⏸")
+            self._set_round_button_face(self.ax_pause, "#EEEEEE")
 
         self.fig.canvas.draw_idle()
 
@@ -382,13 +469,13 @@ class KKTStoneGame:
         self.update_pause_button()
 
     # --------------------------------------------------------
-    # Eventos
+    # Events
     # --------------------------------------------------------
 
     def throw_stone(self, event=None):
         """
-        La bomba manda el estado a un punto aleatorio del cubo [5,30]^6.
-        Ese punto NO tiene por qué cumplir sum(x)=100.
+        The bomb sends the state to a random point in the cube [5,30]^6.
+        That point does NOT have to satisfy sum(x)=100.
         """
         self.stones += 1
         self.mode = "stone"
@@ -425,22 +512,22 @@ class KKTStoneGame:
         self.update_reset_button()
 
     # --------------------------------------------------------
-    # Dinámica
+    # Dynamics
     # --------------------------------------------------------
 
     def step_stone(self):
         """
-        La bomba vuela durante 0.25s. Los puntos NO se mueven durante el vuelo.
-        En el impacto:
-        - suena explosión,
-        - se activa efecto visual,
-        - el sistema salta al punto aleatorio en [5,30]^6,
-        - luego empieza la reparación hacia sum(x)=100.
+        The bomb flies for 0.25s. The points do NOT move during the flight.
+        On impact:
+        - an explosion sound plays,
+        - a visual effect is triggered,
+        - the system jumps to the random point in [5,30]^6,
+        - then repair toward sum(x)=100 begins.
         """
         self.stone_t += 1
         u = min(1.0, self.stone_t / self.stone_frames)
 
-        # Durante el vuelo, mantener el estado original.
+        # During flight, keep the original state.
         self.x = self.stone_start.copy()
 
         if u >= 1.0:
@@ -452,8 +539,8 @@ class KKTStoneGame:
 
     def step_repair(self):
         """
-        Transición suave al poliedro de restricciones.
-        Respeta el cubo porque ambos extremos están en [5,30]^6.
+        Smooth transition to the constraint polyhedron.
+        It respects the box because both endpoints are in [5,30]^6.
         """
         if self.repair_target is None:
             self.repair_target = project_box_sum(self.x)
@@ -474,11 +561,11 @@ class KKTStoneGame:
 
     def step_optimize(self):
         """
-        Ascenso proyectado de f SIN momentum.
+        Projected ascent on f WITHOUT momentum.
 
-        - Lejos: paso más grande.
-        - Cerca: paso más pequeño.
-        - Si max |x-x*| < 0.5, entra en aterrizaje lento.
+        - Far away: larger step.
+        - Close: smaller step.
+        - If max |x-x*| < 1.0, it enters slow landing.
         """
         if self.has_reached_optimum():
             self.reach_optimum()
@@ -549,7 +636,7 @@ class KKTStoneGame:
             self.victory_played = True
 
     # --------------------------------------------------------
-    # Dibujo
+    # Drawing
     # --------------------------------------------------------
 
     def draw_main_panel(self):
@@ -567,7 +654,7 @@ class KKTStoneGame:
         self.ax.text(LOWER + 0.2, 0.0042, "min = 5", color="steelblue", fontsize=10)
         self.ax.text(UPPER - 2.8, 0.0042, "max = 30", color="steelblue", fontsize=10)
 
-        # Flechas y puntos
+        # Arrows and points
         for i in range(N):
             xi = self.x[i]
             yi = y[i]
@@ -575,16 +662,16 @@ class KKTStoneGame:
 
             color = self.colors[i]
 
-            # Flechas 2.5x grandes, proporcionales al gradiente efectivo.
+            # Arrows are 2.5x large, proportional to the effective gradient.
             # Debug importante:
-            # En el óptimo, las variables activas en cota NO deben perder flecha.
-            # Solo las interiores con gradiente efectivo cercano a cero pueden quedar sin flecha.
+            # At the optimum, active bound variables must NOT lose their arrows.
+            # Only interior variables with near-zero effective gradient may have no arrow.
             is_boundary = (xi <= LOWER + 1e-7) or (xi >= UPPER - 1e-7)
             draw_this_arrow = (abs(gi) > 0.02) or (self.mode == "done" and is_boundary)
 
             if draw_this_arrow:
-                # Si por cualquier razón gi fuese casi cero pero está en cota,
-                # darle dirección KKT correcta.
+                # If for any reason gi is almost zero but the variable is at a bound,
+                # give it the correct KKT direction.
                 if abs(gi) <= 0.02 and is_boundary:
                     gi = -1.0 if xi <= LOWER + 1e-7 else 1.0
 
@@ -628,7 +715,7 @@ class KKTStoneGame:
                 weight="bold"
             )
 
-        # Bomba visual: vuelo de 0.25s. Los puntos se quedan quietos hasta el impacto.
+        # Bomb visual: 0.25s flight. Points stay still until impact.
         if self.mode == "stone":
             u = min(1.0, self.stone_t / self.stone_frames)
             smooth = u * u * (3 - 2 * u)
@@ -641,7 +728,7 @@ class KKTStoneGame:
             arc = 0.0048 * math.sin(math.pi * u)
             rock_y = (1 - smooth) * start_y + smooth * target_y + arc
 
-            # Estela
+            # Trail
             for k in range(1, 8):
                 uk = max(0.0, u - 0.030 * k)
                 sk = uk * uk * (3 - 2 * uk)
@@ -655,7 +742,7 @@ class KKTStoneGame:
                     zorder=4
                 )
 
-            # Bomba principal
+            # Bomb principal
             self.ax.scatter(
                 rock_x, rock_y,
                 s=460,
@@ -667,7 +754,7 @@ class KKTStoneGame:
                 zorder=6
             )
 
-            # Brillo
+            # Highlight
             self.ax.scatter(
                 rock_x - 0.18, rock_y + 0.00020,
                 s=90,
@@ -678,13 +765,13 @@ class KKTStoneGame:
 
             self.ax.text(
                 rock_x + 0.45, rock_y + 0.00035,
-                "bomba",
+                "bomb",
                 fontsize=10,
                 color="dimgray",
                 weight="bold"
             )
 
-        # Explosión visual justo después del impacto
+        # Visual explosion right after impact
         if self.explosion_remaining > 0:
             q = 1.0 - self.explosion_remaining / self.explosion_frames_total
             cx = float(np.mean(self.x))
@@ -721,7 +808,7 @@ class KKTStoneGame:
                     zorder=9
                 )
 
-        # Mensaje de óptimo
+        # Optimum message
         if self.mode == "done":
             self.ax.text(
                 0.5,
@@ -745,19 +832,19 @@ class KKTStoneGame:
         self.ax.set_xlim(LOWER - 6, UPPER + 6)
         self.ax.set_ylim(-0.0065, 0.0065)
 
-        self.ax.set_xlabel("Asignación de cada variable")
-        self.ax.set_ylabel("Utilidad marginal neta: Δf - ν·0.001")
+        self.ax.set_xlabel("Allocation of each variable")
+        self.ax.set_ylabel("Net marginal utility: Δf - ν·0.001")
 
         self.ax.set_title(
-            f"Juego KKT interactivo     |     Bombas: {self.stones}     |     Iteraciones: {self.iterations}",
+            f"Interactive KKT game     |     Bombs: {self.stones}     |     Iterations: {self.iterations}",
             fontsize=14,
             pad=12
         )
 
         self.ax.grid(True, alpha=0.25)
 
-        # Recuadro centrado de suma y distancia.
-        # ÚNICO elemento rojo cuando se viola sum(x)=100.
+        # Centered box with sum and distance.
+        # ONLY red element when sum(x)=100 is violated.
         sum_error = float(self.x.sum() - TOTAL)
         sum_violated = abs(sum_error) > 1e-3
 
@@ -791,7 +878,7 @@ class KKTStoneGame:
         self.bar_ax.set_ylim(0, 1)
         self.bar_ax.axis("off")
 
-        # Contenedor
+        # Container
         self.bar_ax.add_patch(
             Rectangle(
                 (0.22, 0.03),
@@ -803,7 +890,7 @@ class KKTStoneGame:
             )
         )
 
-        # Agua
+        # Water
         self.bar_ax.add_patch(
             Rectangle(
                 (0.25, 0.03),
@@ -814,7 +901,7 @@ class KKTStoneGame:
             )
         )
 
-        # Onda
+        # Wave
         if p > 0:
             y0 = 0.03 + 0.92 * p
             xs = np.linspace(0.25, 0.75, 80)
@@ -857,14 +944,14 @@ class KKTStoneGame:
         residual = kkt_residual(self.x)
 
         self.metrics_text.set_text(
-            "Datos KKT:  "
-            f"gap objetivo f*−f(x) = {gap:.4f}     |     "
-            f"violación suma = {sum_error:+.4f}     |     "
-            f"residuo KKT máx. = {residual:.4f}"
+            "KKT data:  "
+            f"objective gap f*−f(x) = {gap:.4f}     |     "
+            f"sum violation = {sum_error:+.4f}     |     "
+            f"max KKT residual = {residual:.4f}"
         )
 
     # --------------------------------------------------------
-    # Loop principal
+    # Main loop
     # --------------------------------------------------------
 
     def update(self, frame):
@@ -889,10 +976,10 @@ class KKTStoneGame:
 
 
 if __name__ == "__main__":
-    print("Juego KKT iniciado, sin momentum.")
-    print(f"Mínimo factible: x_min={X_MIN}, f_min={F_MIN:.4f}")
-    print(f"Óptimo:          x_opt={X_OPT}, f_opt={F_OPT:.4f}")
-    print(f"Flechas en óptimo grad_f(x*)-nu = {arrow_gradient(X_OPT)}")
-    print("Usa el botón 'Lanzar bomba' para sacar el sistema de la senda.")
+    print("KKT game started, without momentum.")
+    print(f"Feasible minimum: x_min={X_MIN}, f_min={F_MIN:.4f}")
+    print(f"Optimum:          x_opt={X_OPT}, f_opt={F_OPT:.4f}")
+    print(f"Arrows at optimum grad_f(x*)-nu = {arrow_gradient(X_OPT)}")
+    print("Use the 'Drop bomb' button to knock the system off path.")
     game = KKTStoneGame()
     plt.show()
