@@ -224,33 +224,80 @@ def arrow_gradient(x, eps=1e-8):
 # 2. Sonidos
 # ============================================================
 
-def _try_winsound_beeps(seq):
+SOUND_VOLUME = 0.50  # 50% de amplitud
+
+
+def _play_tone_sequence(seq, volume=SOUND_VOLUME, sample_rate=22050):
     """
-    Sonido no bloqueante.
-    En Windows usa winsound. En otros sistemas intenta campana terminal.
+    Reproduce una secuencia de tonos con volumen controlado por amplitud.
+
+    En Windows usa winsound.PlaySound sobre un WAV temporal generado.
+    En otros sistemas cae a campana terminal; ahí el volumen real depende del sistema.
     """
     try:
+        import os
+        import math as _math
+        import wave
+        import tempfile
         import winsound
-        for freq, dur in seq:
-            winsound.Beep(int(freq), int(dur))
+        import struct
+
+        volume = float(max(0.0, min(1.0, volume)))
+        samples = []
+
+        for freq, dur_ms in seq:
+            n_samples = int(sample_rate * dur_ms / 1000)
+            for k in range(n_samples):
+                t = k / sample_rate
+                # Envolvente simple para evitar clicks
+                env = min(1.0, k / max(1, int(0.015 * sample_rate)))
+                env *= min(1.0, (n_samples - k) / max(1, int(0.015 * sample_rate)))
+                amp = int(32767 * volume * 0.35 * env)
+                val = int(amp * _math.sin(2 * _math.pi * freq * t))
+                samples.append(val)
+
+            # mini silencio entre tonos
+            samples.extend([0] * int(sample_rate * 0.025))
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            wav_path = tmp.name
+
+        with wave.open(wav_path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(b"".join(struct.pack("<h", s) for s in samples))
+
+        winsound.PlaySound(wav_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+
+        # Limpieza diferida para no borrar el WAV antes de que Windows lo lea
+        def _cleanup():
+            time.sleep(2)
+            try:
+                os.remove(wav_path)
+            except OSError:
+                pass
+
+        threading.Thread(target=_cleanup, daemon=True).start()
+
     except Exception:
-        # Fallback simple: campana terminal
-        print("\a", end="", flush=True)
+        # Fallback simple; el volumen no es controlable con la campana terminal.
+        print("", end="", flush=True)
 
 
 def play_launch_sound():
     seq = [(360, 45), (430, 55)]
-    threading.Thread(target=_try_winsound_beeps, args=(seq,), daemon=True).start()
+    threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
 
 
 def play_impact_sound():
     seq = [(120, 80), (70, 120), (45, 180)]
-    threading.Thread(target=_try_winsound_beeps, args=(seq,), daemon=True).start()
+    threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
 
 
 def play_optimum_sound():
     seq = [(523, 110), (659, 110), (784, 160), (1046, 220)]
-    threading.Thread(target=_try_winsound_beeps, args=(seq,), daemon=True).start()
+    threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
 
 
 # ============================================================
@@ -334,12 +381,15 @@ class KKTStoneGame:
         self.ax_pause = self.fig.add_axes([0.54, 0.07, 0.20, 0.075])
 
         self.btn_stone = Button(self.ax_stone, "Lanzar bomba")
-        self.btn_reset = Button(self.ax_reset, "Reiniciar")
-        self.btn_pause = Button(self.ax_pause, "Pausar")
+        self.btn_reset = Button(self.ax_reset, "↻")
+        self.btn_pause = Button(self.ax_pause, "⏸")
 
         self.btn_stone.on_clicked(self.throw_stone)
         self.btn_reset.on_clicked(self.reset_game)
         self.btn_pause.on_clicked(self.toggle_pause)
+
+        self.btn_reset.label.set_fontsize(18)
+        self.btn_pause.label.set_fontsize(18)
 
         self.metrics_text = self.fig.text(
             0.08, 0.17, "",
@@ -358,21 +408,16 @@ class KKTStoneGame:
         )
 
     def update_reset_button(self):
-        if self.reset_allowed:
-            self.btn_reset.label.set_text("Reiniciar")
-            self.ax_reset.set_facecolor("#DFF2E1")
-        else:
-            self.btn_reset.label.set_text("Reiniciar bloqueado")
-            self.ax_reset.set_facecolor("#EEEEEE")
-
+        self.btn_reset.label.set_text("↻")
+        self.ax_reset.set_facecolor("#DFF2E1")
         self.fig.canvas.draw_idle()
 
     def update_pause_button(self):
         if self.paused:
-            self.btn_pause.label.set_text("Continuar")
+            self.btn_pause.label.set_text("▶")
             self.ax_pause.set_facecolor("#FFF2CC")
         else:
-            self.btn_pause.label.set_text("Pausar")
+            self.btn_pause.label.set_text("⏸")
             self.ax_pause.set_facecolor("#EEEEEE")
 
         self.fig.canvas.draw_idle()
