@@ -266,13 +266,14 @@ class KKTStoneGame:
         self.mode = "optimize"  # optimize, stone, repair, done
         self.iterations = 0
         self.stones = 0
+        self.paused = False
 
-        self.reset_allowed = True
+        self.reset_allowed = False
         self.victory_played = False
 
         # Parámetros visuales / dinámicos
         self.interval_ms = 30
-        self.stone_seconds = 0.40
+        self.stone_seconds = 0.25
         self.stone_frames = max(2, int(round(1000 * self.stone_seconds / self.interval_ms)))
 
         # Sin momentum: paso proyectado simple.
@@ -289,7 +290,7 @@ class KKTStoneGame:
         self.landing_remaining = 0
         self.landing_start = None
 
-        self.repair_rate = 0.42  # reparación rápida hacia sum(x)=100
+        self.repair_rate = 0.10  # suavidad al regresar a sum(x)=100
         self.explosion_frames_total = 8
         self.explosion_remaining = 0
         self.opt_tol = 0.004
@@ -307,6 +308,7 @@ class KKTStoneGame:
 
         self._setup_figure()
         self.update_reset_button()
+        self.update_pause_button()
 
         self.anim = FuncAnimation(
             self.fig,
@@ -329,12 +331,15 @@ class KKTStoneGame:
 
         self.ax_stone = self.fig.add_axes([0.08, 0.07, 0.20, 0.075])
         self.ax_reset = self.fig.add_axes([0.31, 0.07, 0.20, 0.075])
+        self.ax_pause = self.fig.add_axes([0.54, 0.07, 0.20, 0.075])
 
         self.btn_stone = Button(self.ax_stone, "Lanzar bomba")
         self.btn_reset = Button(self.ax_reset, "Reiniciar")
+        self.btn_pause = Button(self.ax_pause, "Pausar")
 
         self.btn_stone.on_clicked(self.throw_stone)
         self.btn_reset.on_clicked(self.reset_game)
+        self.btn_pause.on_clicked(self.toggle_pause)
 
         self.metrics_text = self.fig.text(
             0.08, 0.17, "",
@@ -353,10 +358,28 @@ class KKTStoneGame:
         )
 
     def update_reset_button(self):
-        # Reinicio siempre disponible.
-        self.btn_reset.label.set_text("Reiniciar")
-        self.ax_reset.set_facecolor("#DFF2E1")
+        if self.reset_allowed:
+            self.btn_reset.label.set_text("Reiniciar")
+            self.ax_reset.set_facecolor("#DFF2E1")
+        else:
+            self.btn_reset.label.set_text("Reiniciar bloqueado")
+            self.ax_reset.set_facecolor("#EEEEEE")
+
         self.fig.canvas.draw_idle()
+
+    def update_pause_button(self):
+        if self.paused:
+            self.btn_pause.label.set_text("Continuar")
+            self.ax_pause.set_facecolor("#FFF2CC")
+        else:
+            self.btn_pause.label.set_text("Pausar")
+            self.ax_pause.set_facecolor("#EEEEEE")
+
+        self.fig.canvas.draw_idle()
+
+    def toggle_pause(self, event=None):
+        self.paused = not self.paused
+        self.update_pause_button()
 
     # --------------------------------------------------------
     # Eventos
@@ -370,7 +393,7 @@ class KKTStoneGame:
         self.stones += 1
         self.mode = "stone"
         self.victory_played = False
-        self.reset_allowed = True
+        self.reset_allowed = False
         self.update_reset_button()
 
         self.landing_remaining = 0
@@ -385,14 +408,19 @@ class KKTStoneGame:
         play_launch_sound()
 
     def reset_game(self, event=None):
+        if not self.reset_allowed:
+            return
+
         self.x = X0.copy()
         self.mode = "optimize"
         self.iterations = 0
         self.stones = 0
+        self.paused = False
+        self.update_pause_button()
         self.landing_remaining = 0
         self.landing_start = None
 
-        self.reset_allowed = True
+        self.reset_allowed = False
         self.victory_played = False
         self.update_reset_button()
 
@@ -402,7 +430,7 @@ class KKTStoneGame:
 
     def step_stone(self):
         """
-        La bomba vuela durante 0.4s. Los puntos NO se mueven durante el vuelo.
+        La bomba vuela durante 0.25s. Los puntos NO se mueven durante el vuelo.
         En el impacto:
         - suena explosión,
         - se activa efecto visual,
@@ -434,8 +462,8 @@ class KKTStoneGame:
         self.iterations += 1
 
         close_to_polyhedron = (
-            abs(self.x.sum() - TOTAL) < 0.005
-            and np.max(np.abs(self.x - self.repair_target)) < 0.005
+            abs(self.x.sum() - TOTAL) < 0.02
+            and np.max(np.abs(self.x - self.repair_target)) < 0.02
         )
 
         if close_to_polyhedron:
@@ -532,28 +560,12 @@ class KKTStoneGame:
 
         alpha = alpha_from_value(self.x)
 
-        sum_error = float(self.x.sum() - TOTAL)
-        sum_violated = abs(sum_error) > 1e-3
-        alert_color = "#B00020"
-        alert_bg = "#FFE1E1"
+        self.ax.axvline(LOWER, linestyle="--", linewidth=1.5, color="steelblue")
+        self.ax.axvline(UPPER, linestyle="--", linewidth=1.5, color="steelblue")
+        self.ax.axhline(0, linewidth=1.2, color="steelblue", alpha=0.8)
 
-        if sum_violated:
-            self.ax.set_facecolor(alert_bg)
-            for spine in self.ax.spines.values():
-                spine.set_color(alert_color)
-                spine.set_linewidth(2.2)
-
-        self.ax.axvline(LOWER, linestyle="--", linewidth=1.5,
-                        color=alert_color if sum_violated else "steelblue")
-        self.ax.axvline(UPPER, linestyle="--", linewidth=1.5,
-                        color=alert_color if sum_violated else "steelblue")
-        self.ax.axhline(0, linewidth=1.2,
-                        color=alert_color if sum_violated else "steelblue", alpha=0.8)
-
-        self.ax.text(LOWER + 0.2, 0.0042, "min = 5",
-                     color=alert_color if sum_violated else "steelblue", fontsize=10)
-        self.ax.text(UPPER - 2.8, 0.0042, "max = 30",
-                     color=alert_color if sum_violated else "steelblue", fontsize=10)
+        self.ax.text(LOWER + 0.2, 0.0042, "min = 5", color="steelblue", fontsize=10)
+        self.ax.text(UPPER - 2.8, 0.0042, "max = 30", color="steelblue", fontsize=10)
 
         # Flechas y puntos
         for i in range(N):
@@ -562,7 +574,6 @@ class KKTStoneGame:
             gi = g_eff[i]
 
             color = self.colors[i]
-            display_color = alert_color if sum_violated else color
 
             # Flechas 2.5x grandes, proporcionales al gradiente efectivo.
             # Debug importante:
@@ -588,21 +599,21 @@ class KKTStoneGame:
                     zorder=4,
                     arrowprops=dict(
                         arrowstyle="-|>",
-                        lw=2.8,
-                        color=display_color,
-                        alpha=1.0 if sum_violated else max(alpha, 0.65),
+                        lw=2.6,
+                        color=color,
+                        alpha=max(alpha, 0.65),
                         shrinkA=4,
                         shrinkB=0,
-                        mutation_scale=19
+                        mutation_scale=18
                     )
                 )
 
             self.ax.scatter(
                 xi, yi,
                 s=150,
-                color=display_color,
-                alpha=1.0 if sum_violated else alpha,
-                edgecolor=display_color,
+                color=color,
+                alpha=alpha,
+                edgecolor=color,
                 linewidth=1.0,
                 zorder=3
             )
@@ -612,12 +623,12 @@ class KKTStoneGame:
                 yi + 0.00022,
                 f"x{i+1}",
                 fontsize=11,
-                color=display_color,
-                alpha=1.0 if sum_violated else alpha,
+                color=color,
+                alpha=alpha,
                 weight="bold"
             )
 
-        # Piedra visual: vuelo de 0.4s. Los puntos se quedan quietos hasta el impacto.
+        # Bomba visual: vuelo de 0.25s. Los puntos se quedan quietos hasta el impacto.
         if self.mode == "stone":
             u = min(1.0, self.stone_t / self.stone_frames)
             smooth = u * u * (3 - 2 * u)
@@ -644,7 +655,7 @@ class KKTStoneGame:
                     zorder=4
                 )
 
-            # Piedra principal
+            # Bomba principal
             self.ax.scatter(
                 rock_x, rock_y,
                 s=460,
@@ -740,17 +751,17 @@ class KKTStoneGame:
         self.ax.set_title(
             f"Juego KKT interactivo     |     Bombas: {self.stones}     |     Iteraciones: {self.iterations}",
             fontsize=14,
-            pad=12,
-            color=alert_color if sum_violated else "black"
+            pad=12
         )
 
-        self.ax.grid(True, alpha=0.35 if sum_violated else 0.25, color=alert_color if sum_violated else None)
+        self.ax.grid(True, alpha=0.25)
 
-        # Recuadro centrado de suma y distancia
+        # Recuadro centrado de suma y distancia.
+        # ÚNICO elemento rojo cuando se viola sum(x)=100.
+        sum_error = float(self.x.sum() - TOTAL)
+        sum_violated = abs(sum_error) > 1e-3
+
         state = f"sum(x) = {self.x.sum():.2f}     |     max |x-x*| = {np.max(np.abs(self.x - X_OPT)):.4f}"
-        if sum_violated:
-            state = "⚠ SUMA VIOLADA: " + state
-
         self.ax.text(
             0.5,
             0.94,
@@ -758,15 +769,15 @@ class KKTStoneGame:
             transform=self.ax.transAxes,
             ha="center",
             va="center",
-            fontsize=11 if sum_violated else 10,
+            fontsize=10,
             color="white" if sum_violated else "black",
             weight="bold" if sum_violated else "normal",
             bbox=dict(
-                boxstyle="round,pad=0.45" if sum_violated else "round,pad=0.35",
-                facecolor=alert_color if sum_violated else "#F4F4F4",
-                edgecolor="#650000" if sum_violated else "#CCCCCC",
-                linewidth=2.2 if sum_violated else 1.0,
-                alpha=0.98 if sum_violated else 0.95
+                boxstyle="round,pad=0.35",
+                facecolor="#B00020" if sum_violated else "#F4F4F4",
+                edgecolor="#700000" if sum_violated else "#CCCCCC",
+                linewidth=1.4 if sum_violated else 1.0,
+                alpha=0.96 if sum_violated else 0.95
             )
         )
 
@@ -775,8 +786,6 @@ class KKTStoneGame:
 
         p = progress_value(self.x)
         fx = f(self.x)
-        sum_violated = abs(float(self.x.sum() - TOTAL)) > 1e-3
-        alert_color = "#B00020"
 
         self.bar_ax.set_xlim(0, 1)
         self.bar_ax.set_ylim(0, 1)
@@ -789,7 +798,7 @@ class KKTStoneGame:
                 0.56,
                 0.92,
                 fill=False,
-                edgecolor=alert_color if sum_violated else "#1F4E79",
+                edgecolor="#1F4E79",
                 linewidth=2
             )
         )
@@ -800,7 +809,7 @@ class KKTStoneGame:
                 (0.25, 0.03),
                 0.50,
                 0.92 * p,
-                color=alert_color if sum_violated else "#1E88E5",
+                color="#1E88E5",
                 alpha=0.82
             )
         )
@@ -853,28 +862,27 @@ class KKTStoneGame:
             f"violación suma = {sum_error:+.4f}     |     "
             f"residuo KKT máx. = {residual:.4f}"
         )
-        self.metrics_text.set_color("#B00020" if abs(sum_error) > 1e-3 else "black")
-        self.metrics_text.set_weight("bold" if abs(sum_error) > 1e-3 else "normal")
 
     # --------------------------------------------------------
     # Loop principal
     # --------------------------------------------------------
 
     def update(self, frame):
-        if self.mode == "stone":
-            self.step_stone()
-        elif self.mode == "repair":
-            self.step_repair()
-        elif self.mode == "optimize":
-            self.step_optimize()
-        elif self.mode == "done":
-            pass
+        if not self.paused:
+            if self.mode == "stone":
+                self.step_stone()
+            elif self.mode == "repair":
+                self.step_repair()
+            elif self.mode == "optimize":
+                self.step_optimize()
+            elif self.mode == "done":
+                pass
 
         self.draw_main_panel()
         self.draw_bar()
         self.draw_metrics()
 
-        if self.explosion_remaining > 0:
+        if not self.paused and self.explosion_remaining > 0:
             self.explosion_remaining -= 1
 
         return []
