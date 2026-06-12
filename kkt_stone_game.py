@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Juego interactivo KKT: piedras, reparación al poliedro y convergencia al óptimo.
+Juego interactivo KKT: piedras, reparación al poliedro y convergencia al óptimo con momentum.
 
 Ejecutar:
     python kkt_stone_game.py
@@ -247,16 +247,31 @@ class KKTStoneGame:
 
         # Parámetros visuales / dinámicos
         self.interval_ms = 80
-        self.stone_seconds = 0.20
+        self.stone_seconds = 1.00
         self.stone_frames = max(2, int(round(1000 * self.stone_seconds / self.interval_ms)))
 
-        self.eta = 0.30          # velocidad de convergencia base
+        # Momentum adaptativo:
+        # - Lejos: eta alta + momentum alto
+        # - Cerca: eta baja + momentum bajo
+        # - Muy cerca: aterrizaje lento en 5 pasos exactos
+        self.eta_min = 0.035
+        self.eta_max = 0.58
+        self.momentum_min = 0.15
+        self.momentum_max = 0.86
+        self.velocity = np.zeros(N)
+
+        self.landing_threshold = 0.50
+        self.landing_steps_total = 5
+        self.landing_remaining = 0
+        self.landing_start = None
+
         self.repair_rate = 0.10  # suavidad al regresar a sum(x)=100
         self.opt_tol = 0.004
 
         self.stone_t = 0
         self.stone_start = None
         self.stone_target = None
+        self.stone_origin = None
         self.repair_target = None
 
         self.colors = [
@@ -336,9 +351,14 @@ class KKTStoneGame:
         self.reset_allowed = False
         self.update_reset_button()
 
+        self.velocity[:] = 0.0
+        self.landing_remaining = 0
+        self.landing_start = None
+
         self.stone_t = 0
         self.stone_start = self.x.copy()
         self.stone_target = self.rng.uniform(LOWER, UPPER, size=N)
+        self.stone_origin = np.array([32.0, 0.0050])
 
         play_stone_sound()
 
@@ -350,6 +370,9 @@ class KKTStoneGame:
         self.mode = "optimize"
         self.iterations = 0
         self.stones = 0
+        self.velocity[:] = 0.0
+        self.landing_remaining = 0
+        self.landing_start = None
 
         self.reset_allowed = False
         self.victory_played = False
@@ -360,11 +383,19 @@ class KKTStoneGame:
     # --------------------------------------------------------
 
     def step_stone(self):
+        """
+        Piedra de 1 segundo:
+        - El estado se mueve con easing elástico hacia un punto aleatorio.
+        - Visualmente se dibuja una piedra parabólica con estela en draw_main_panel().
+        """
         self.stone_t += 1
         u = min(1.0, self.stone_t / self.stone_frames)
 
-        # ease-out: impacto rápido y suave
-        s = 1.0 - (1.0 - u) ** 3
+        # Movimiento del sistema: smoothstep + leve overshoot amortiguado
+        smooth = u * u * (3 - 2 * u)
+        wobble = 0.06 * math.sin(5 * math.pi * u) * (1 - u)
+        s = np.clip(smooth + wobble, 0.0, 1.0)
+
         self.x = self.stone_start + s * (self.stone_target - self.stone_start)
 
         if u >= 1.0:
@@ -390,19 +421,55 @@ class KKTStoneGame:
 
         if close_to_polyhedron:
             self.x = self.repair_target.copy()
+            self.velocity[:] = 0.0
+            self.landing_remaining = 0
+            self.landing_start = None
             self.mode = "optimize"
 
     def step_optimize(self):
         """
-        Ascenso proyectado de f.
-        Equivale a descenso proyectado de -f.
+        Ascenso proyectado de f con momentum adaptativo.
+
+        Regla:
+        - Si está lejos del óptimo, se mueve rápido y con más momentum.
+        - Si está cerca, baja velocidad y momentum.
+        - Si max |x-x*| < 0.5, entra en aterrizaje de 5 pasos,
+          acercándose lentamente al óptimo exacto.
         """
         if self.has_reached_optimum():
             self.reach_optimum()
             return
 
-        x_next = project_box_sum(self.x + self.eta * grad_f(self.x))
-        self.x = x_next
+        max_dist = float(np.max(np.abs(self.x - X_OPT)))
+
+        # Aterrizaje final: exactamente 5 pasos visuales lentos.
+        if max_dist < self.landing_threshold:
+            if self.landing_remaining <= 0:
+                self.landing_remaining = self.landing_steps_total
+                self.landing_start = self.x.copy()
+                self.velocity[:] = 0.0
+
+            # ease-out lento: cada frame consume una fracción del gap restante
+            frac = 1.0 / self.landing_remaining
+            self.x = self.x + frac * (X_OPT - self.x)
+            self.landing_remaining -= 1
+            self.iterations += 1
+
+            if self.landing_remaining <= 0 or self.has_reached_optimum():
+                self.reach_optimum()
+            return
+
+        # Momentum adaptativo, normalizado por distancia.
+        closeness = np.clip(max_dist / 12.0, 0.0, 1.0)
+        eta = self.eta_min + (self.eta_max - self.eta_min) * closeness
+        mom = self.momentum_min + (self.momentum_max - self.momentum_min) * closeness
+
+        proposed_velocity = mom * self.velocity + eta * grad_f(self.x)
+        x_candidate = project_box_sum(self.x + proposed_velocity)
+
+        # La velocidad real es el desplazamiento tras proyectar al poliedro.
+        self.velocity = x_candidate - self.x
+        self.x = x_candidate
         self.iterations += 1
 
         if self.has_reached_optimum():
@@ -491,25 +558,75 @@ class KKTStoneGame:
                 weight="bold"
             )
 
-        # Piedra visual durante el impacto
+        # Piedra visual durante el impacto: arco parabólico + estela + ondas
         if self.mode == "stone":
             u = min(1.0, self.stone_t / self.stone_frames)
-            rock_x = 32 - 22 * u
-            rock_y = 0.0045 - 0.0065 * u
+            smooth = u * u * (3 - 2 * u)
 
+            # Punto visual de impacto: centro promedio del sistema actual
+            target_x = float(np.mean(self.x))
+            target_y = float(np.mean(y))
+            start_x, start_y = 32.0, 0.0050
+
+            rock_x = (1 - smooth) * start_x + smooth * target_x
+            arc = 0.0042 * math.sin(math.pi * u)
+            rock_y = (1 - smooth) * start_y + smooth * target_y + arc
+
+            # Estela
+            for k in range(1, 6):
+                uk = max(0.0, u - 0.035 * k)
+                sk = uk * uk * (3 - 2 * uk)
+                tx = (1 - sk) * start_x + sk * target_x
+                ty = (1 - sk) * start_y + sk * target_y + 0.0042 * math.sin(math.pi * uk)
+                self.ax.scatter(
+                    tx, ty,
+                    s=max(20, 130 - 18 * k),
+                    color="dimgray",
+                    alpha=max(0.05, 0.22 - 0.03 * k),
+                    zorder=4
+                )
+
+            # Piedra principal
             self.ax.scatter(
                 rock_x, rock_y,
-                s=350,
-                color="dimgray",
-                alpha=0.85,
+                s=420,
+                color="#4B4B4B",
+                alpha=0.92,
                 marker="o",
-                zorder=5
+                edgecolor="black",
+                linewidth=1.0,
+                zorder=6
             )
+
+            # Brillo/volumen
+            self.ax.scatter(
+                rock_x - 0.18, rock_y + 0.00018,
+                s=80,
+                color="#8A8A8A",
+                alpha=0.7,
+                zorder=7
+            )
+
+            # Ondas de impacto hacia el final
+            if u > 0.70:
+                ring_alpha = (u - 0.70) / 0.30
+                for rr in [0.35, 0.70, 1.05]:
+                    self.ax.scatter(
+                        target_x, target_y,
+                        s=700 * rr * ring_alpha,
+                        facecolors="none",
+                        edgecolors="dimgray",
+                        alpha=max(0.0, 0.35 * (1 - ring_alpha)),
+                        linewidth=1.2,
+                        zorder=3
+                    )
+
             self.ax.text(
-                rock_x + 0.4, rock_y + 0.00035,
+                rock_x + 0.45, rock_y + 0.00035,
                 "piedra",
                 fontsize=10,
-                color="dimgray"
+                color="dimgray",
+                weight="bold"
             )
 
         # Mensaje de óptimo
