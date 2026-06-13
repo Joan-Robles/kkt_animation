@@ -3,14 +3,14 @@
 Interactive KKT game: bombs, repair to the polyhedron, and convergence to the optimum.
 
 Run:
-    python kkt_stone_game.py
+    python kkt_animation.py
 
 Requirements:
     pip install numpy matplotlib
 
 If you are in Jupyter:
     %matplotlib qt
-    %run kkt_stone_game.py
+    %run kkt_animation.py
 """
 
 import itertools
@@ -45,7 +45,7 @@ UPPER = 30.0
 TOTAL = 100.0
 N = 6
 
-# Optimum construido del problema de maximización
+# Optimum constructed for the maximization problem
 X_OPT = np.array([5, 5, 12, 18, 30, 30], dtype=float)
 NU_OPT = 1.0
 
@@ -210,7 +210,7 @@ def arrow_gradient(x, eps=1e-8):
       x3,x4 interior: no arrow
 
     This prevents numerical effects or 'done' states from removing arrows
-    de las restricciones activas.
+    from active constraints.
     """
     x = np.asarray(x, dtype=float)
 
@@ -224,15 +224,16 @@ def arrow_gradient(x, eps=1e-8):
 # 2. Sounds
 # ============================================================
 
-SOUND_VOLUME = 0.50  # 50% de amplitud
+SOUND_VOLUME = 0.50  # 50% amplitude
 
 
 def _play_tone_sequence(seq, volume=SOUND_VOLUME, sample_rate=22050):
     """
-    Reproduce una secuencia de tonos con volumen controlado por amplitud.
+    Play a sequence of tones with amplitude-controlled volume.
 
-    En Windows usa winsound.PlaySound sobre un WAV temporal generado.
-    En otros sistemas cae a campana terminal; ahí el volumen real depende del sistema.
+    On Windows this uses winsound.PlaySound on a generated temporary WAV.
+    On other systems it falls back to the terminal bell; in that case the actual
+    volume depends on the system settings.
     """
     try:
         import os
@@ -249,14 +250,14 @@ def _play_tone_sequence(seq, volume=SOUND_VOLUME, sample_rate=22050):
             n_samples = int(sample_rate * dur_ms / 1000)
             for k in range(n_samples):
                 t = k / sample_rate
-                # Envolvente simple para evitar clicks
+                # Simple envelope to avoid clicks
                 env = min(1.0, k / max(1, int(0.015 * sample_rate)))
                 env *= min(1.0, (n_samples - k) / max(1, int(0.015 * sample_rate)))
                 amp = int(32767 * volume * 0.35 * env)
                 val = int(amp * _math.sin(2 * _math.pi * freq * t))
                 samples.append(val)
 
-            # mini silencio entre tonos
+            # Short silence between tones
             samples.extend([0] * int(sample_rate * 0.025))
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
@@ -270,7 +271,7 @@ def _play_tone_sequence(seq, volume=SOUND_VOLUME, sample_rate=22050):
 
         winsound.PlaySound(wav_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
 
-        # Limpieza diferida para no borrar el WAV antes de que Windows lo lea
+        # Deferred cleanup so Windows can read the WAV before it is removed
         def _cleanup():
             time.sleep(2)
             try:
@@ -281,7 +282,7 @@ def _play_tone_sequence(seq, volume=SOUND_VOLUME, sample_rate=22050):
         threading.Thread(target=_cleanup, daemon=True).start()
 
     except Exception:
-        # Fallback simple; el volumen no es controlable con la campana terminal.
+        # Simple fallback; terminal bell volume is not controllable here.
         print("", end="", flush=True)
 
 
@@ -314,19 +315,23 @@ class KKTStoneGame:
         self.iterations = 0
         self.stones = 0
         self.paused = False
+        self.info_open = False
 
         self.reset_allowed = False
         self.victory_played = False
 
         # Visual / dynamic parameters
-        self.interval_ms = 30
+        self.interval_ms = 2      # velocidad del loop/iteraciones
+        # Bomb duration is controlled by wall-clock time, not by frame count.
+        # This keeps the bomb flight at 0.25 real seconds even if interval_ms changes.
         self.stone_seconds = 0.25
-        self.stone_frames = max(2, int(round(1000 * self.stone_seconds / self.interval_ms)))
+        self.stone_frames = None  # Intentionally unused; kept only to document the old approach.
+        self.stone_start_time = None
 
         # No momentum: simple projected step.
         # Far away it moves faster; close to the optimum, slower.
-        self.eta_min = 0.035
-        self.eta_max = 0.45
+        self.eta_min = 0.075
+        self.eta_max = 6
 
         # Maximum allowed movement:
         # 0.1 per variable per iteration = 1 unit every 10 iterations.
@@ -356,6 +361,7 @@ class KKTStoneGame:
         self._setup_figure()
         self.update_reset_button()
         self.update_pause_button()
+        self.update_info_button()
 
         self.anim = FuncAnimation(
             self.fig,
@@ -381,17 +387,21 @@ class KKTStoneGame:
         # Small controls: circular icons, side by side.
         self.ax_reset = self.fig.add_axes([0.315, 0.082, 0.045, 0.045])
         self.ax_pause = self.fig.add_axes([0.372, 0.082, 0.045, 0.045])
+        self.ax_info = self.fig.add_axes([0.429, 0.082, 0.045, 0.045])
 
         self.btn_stone = Button(self.ax_stone, "Drop bomb")
         self.btn_reset = Button(self.ax_reset, "↻")
         self.btn_pause = Button(self.ax_pause, "⏸")
+        self.btn_info = Button(self.ax_info, "ℹ")
 
         self.btn_stone.on_clicked(self.throw_stone)
         self.btn_reset.on_clicked(self.reset_game)
         self.btn_pause.on_clicked(self.toggle_pause)
+        self.btn_info.on_clicked(self.toggle_info_panel)
 
         self.btn_reset.label.set_fontsize(15)
         self.btn_pause.label.set_fontsize(15)
+        self.btn_info.label.set_fontsize(15)
 
         self._style_round_icon_buttons()
 
@@ -404,22 +414,46 @@ class KKTStoneGame:
 
         self.info_text = self.fig.text(
             0.55, 0.08,
-            f"Feasible minimum: f={F_MIN:.2f} en {np.round(X_MIN, 2)}     |     Optimum: f={F_OPT:.2f}",
+            f"Feasible minimum: f={F_MIN:.2f} at {np.round(X_MIN, 2)}     |     Optimum: f={F_OPT:.2f}",
             fontsize=10,
             ha="left",
             va="center",
             color="0.25"
         )
 
+        # Collapsible objective/parameter panel.
+        # Purely informational: it does not change timing, optimization steps,
+        # bomb dynamics, or any animation state transition.
+        self.objective_panel = self.fig.text(
+            0.08, 0.965, "",
+            fontsize=9.5,
+            ha="left",
+            va="top",
+            family="monospace",
+            color="#222222",
+            visible=False,
+            bbox=dict(
+                boxstyle="round,pad=0.55",
+                facecolor="#FBFBFB",
+                edgecolor="#777777",
+                linewidth=1.2,
+                alpha=0.97
+            )
+        )
+
     def _style_round_icon_buttons(self):
         """
-        Hace que reinicio y pausa se vean como botones circulares pequeños.
-        El área clickeable sigue siendo el eje cuadrado, pero no se muestra caja.
+        Style restart and pause as small circular buttons.
+        The clickable area is still the square axes, but the rectangular box is hidden.
         """
-        self._round_button_axes = [self.ax_reset, self.ax_pause]
+        self._round_button_axes = [self.ax_reset, self.ax_pause, self.ax_info]
         self._round_button_circles = {}
 
-        for ax, face in [(self.ax_reset, "#EAF6EA"), (self.ax_pause, "#EEEEEE")]:
+        for ax, face in [
+            (self.ax_reset, "#EAF6EA"),
+            (self.ax_pause, "#EEEEEE"),
+            (self.ax_info, "#EAF2FF"),
+        ]:
             ax.set_aspect("equal")
             ax.set_xticks([])
             ax.set_yticks([])
@@ -428,7 +462,7 @@ class KKTStoneGame:
             for spine in ax.spines.values():
                 spine.set_visible(False)
 
-            # Ocultar la caja rectangular del widget.
+            # Hide the widget's rectangular box.
             ax.patch.set_alpha(0)
 
             circle = Circle(
@@ -468,6 +502,47 @@ class KKTStoneGame:
         self.paused = not self.paused
         self.update_pause_button()
 
+    def objective_panel_text(self):
+        """Return the text shown in the collapsible objective/parameter panel."""
+        q_text = np.array2string(Q, precision=3, suppress_small=True)
+        b_text = np.array2string(b, precision=3, suppress_small=True)
+        xopt_text = np.array2string(X_OPT, precision=3, suppress_small=True)
+
+        return (
+            "Objective function:\n"
+            "    maximize  f(x) = b'x - 0.5 x'Qx\n\n"
+            "Constraints:\n"
+            f"    {LOWER:.0f} <= x_i <= {UPPER:.0f}\n"
+            f"    sum_i x_i = {TOTAL:.0f}\n\n"
+            "Parameters:\n"
+            f"    b = {b_text}\n"
+            f"    Q =\n{q_text}\n"
+            f"    x* = {xopt_text}\n"
+            f"    nu* = {NU_OPT:.3f}\n\n"
+            "Animation settings:\n"
+            f"    interval_ms = {self.interval_ms}\n"
+            f"    bomb duration = {self.stone_seconds:.2f}s, measured with wall-clock time\n"
+            f"    max step per iteration = {self.max_step_per_iteration:.3f}\n"
+            f"    landing threshold = {self.landing_threshold:.2f}\n"
+            f"    landing steps = {self.landing_steps_total}\n"
+        )
+
+    def update_info_button(self):
+        """Update the info icon color according to whether the panel is open."""
+        if self.info_open:
+            self._set_round_button_face(self.ax_info, "#CFE3FF")
+        else:
+            self._set_round_button_face(self.ax_info, "#EAF2FF")
+
+        self.fig.canvas.draw_idle()
+
+    def toggle_info_panel(self, event=None):
+        """Show/hide the objective and parameter panel."""
+        self.info_open = not self.info_open
+        self.objective_panel.set_text(self.objective_panel_text())
+        self.objective_panel.set_visible(self.info_open)
+        self.update_info_button()
+
     # --------------------------------------------------------
     # Events
     # --------------------------------------------------------
@@ -486,7 +561,8 @@ class KKTStoneGame:
         self.landing_remaining = 0
         self.landing_start = None
 
-        self.stone_t = 0
+        self.stone_t = 0  # Kept only as a frame counter/debug counter.
+        self.stone_start_time = time.perf_counter()
         self.stone_start = self.x.copy()
         self.stone_target = self.rng.uniform(LOWER, UPPER, size=N)
         self.stone_origin = np.array([32.0, 0.0050])
@@ -515,9 +591,25 @@ class KKTStoneGame:
     # Dynamics
     # --------------------------------------------------------
 
+    def bomb_progress(self):
+        """
+        Return bomb flight progress in [0, 1] using real wall-clock time.
+
+        Why not use stone_frames? Because stone_frames depends on interval_ms.
+        If interval_ms is reduced to make the optimization iterate faster, the
+        number of bomb frames increases. Matplotlib may fail to render those
+        frames at the requested speed, making the bomb look slower. Wall-clock
+        timing avoids that: stone_seconds is the real duration.
+        """
+        if self.stone_start_time is None:
+            return 0.0
+
+        elapsed = time.perf_counter() - self.stone_start_time
+        return float(np.clip(elapsed / self.stone_seconds, 0.0, 1.0))
+
     def step_stone(self):
         """
-        The bomb flies for 0.25s. The points do NOT move during the flight.
+        The bomb flies for 0.25 real seconds. The points do NOT move during the flight.
         On impact:
         - an explosion sound plays,
         - a visual effect is triggered,
@@ -525,7 +617,7 @@ class KKTStoneGame:
         - then repair toward sum(x)=100 begins.
         """
         self.stone_t += 1
-        u = min(1.0, self.stone_t / self.stone_frames)
+        u = self.bomb_progress()
 
         # During flight, keep the original state.
         self.x = self.stone_start.copy()
@@ -663,7 +755,7 @@ class KKTStoneGame:
             color = self.colors[i]
 
             # Arrows are 2.5x large, proportional to the effective gradient.
-            # Debug importante:
+            # Important rendering debug:
             # At the optimum, active bound variables must NOT lose their arrows.
             # Only interior variables with near-zero effective gradient may have no arrow.
             is_boundary = (xi <= LOWER + 1e-7) or (xi >= UPPER - 1e-7)
@@ -717,7 +809,7 @@ class KKTStoneGame:
 
         # Bomb visual: 0.25s flight. Points stay still until impact.
         if self.mode == "stone":
-            u = min(1.0, self.stone_t / self.stone_frames)
+            u = self.bomb_progress()
             smooth = u * u * (3 - 2 * u)
 
             target_x = float(np.mean(self.stone_start))
@@ -813,7 +905,7 @@ class KKTStoneGame:
             self.ax.text(
                 0.5,
                 0.52,
-                "ÓPTIMO CONSEGUIDO\nKKT satisfecho",
+                "OPTIMUM REACHED\nKKT satisfied",
                 transform=self.ax.transAxes,
                 ha="center",
                 va="center",
