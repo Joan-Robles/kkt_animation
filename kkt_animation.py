@@ -240,6 +240,10 @@ def _play_tone_sequence(seq, volume=SOUND_VOLUME, sample_rate=22050):
         import math as _math
         import wave
         import tempfile
+        import os
+        import math as _math
+        import wave
+        import tempfile
         import winsound
         import struct
 
@@ -289,15 +293,18 @@ def _play_tone_sequence(seq, volume=SOUND_VOLUME, sample_rate=22050):
 def play_launch_sound():
     seq = [(360, 45), (430, 55)]
     threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
+    threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
 
 
 def play_impact_sound():
     seq = [(120, 80), (70, 120), (45, 180)]
     threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
+    threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
 
 
 def play_optimum_sound():
     seq = [(523, 110), (659, 110), (784, 160), (1046, 220)]
+    threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
     threading.Thread(target=_play_tone_sequence, args=(seq,), daemon=True).start()
 
 
